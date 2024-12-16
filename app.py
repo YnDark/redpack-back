@@ -423,6 +423,9 @@ def GrabRedpack():
     envelopToGrab = request_data['envelopToGrab']
     GrabUser = request_data['GrabUser']
 
+    # 是否抢过
+    isGrab = request_data['isGrab']
+
     #抢红包者信息
     name = GrabUser['name']
     Id = GrabUser['ID']
@@ -438,42 +441,62 @@ def GrabRedpack():
     ownerName = envelopToGrab['ownerName']
     ownerBalance = float(envelopToGrab['ownerBalance'])
 
-    # 获取红包分割的第一个
-    grabMoney = db.session.execute(text("select split_money from redenvelope_split where redenvelope_split.redId={};".format(envid))).fetchone()
+    if isGrab != 'success':
+        # 获取红包分割的第一个
+        grabMoney = db.session.execute(text(
+            "select split_money from redenvelope_split where redenvelope_split.redId={};".format(envid))).fetchone()
 
-    if grabMoney is None:
-        # 删除该红包
-        print(envid)
-        db.session.execute(text("delete from redenvelope where redenvelope.id={};".format(envid)))
+        if grabMoney is None:
+            # 删除该红包
+            print(envid)
+            db.session.execute(text("delete from redenvelope where redenvelope.id={};".format(envid)))
+            db.session.commit()
+            return dict({'status': "failure", "msg": "红包抢完了"})
+
+        print(grabMoney)
+        grabMoney = grabMoney[0]
+
+        # 删除抢到的红包分割
+        db.session.execute(text(
+            "delete from redenvelope_split where redenvelope_split.redId={} AND redenvelope_split.split_money={};".format(
+                envid, grabMoney)))
         db.session.commit()
-        return dict({'status': "failure","msg":"红包抢完了"})
 
-    print(grabMoney)
-    grabMoney = grabMoney[0]
-
-    # 删除抢到的红包分割
-    db.session.execute(text("delete from redenvelope_split where redenvelope_split.redId={} AND redenvelope_split.split_money={};".format(envid, grabMoney)))
-    db.session.commit()
-
-    # 在抢红包记录中添加记录
-    addRecord = Record_db(Id,envid,grabMoney,datetime.datetime.now())
-    db.session.add(addRecord)
-    db.session.commit()
+        # 在抢红包记录中添加记录
+        addRecord = Record_db(Id, envid, grabMoney, datetime.datetime.now())
+        db.session.add(addRecord)
+        db.session.commit()
 
     # 获取该红包被抢的所有信息
-    envGrabData = db.session.execute(text("select userid,redid,amount,time from record where redid={};".format(envid)))
+    envGrabData = db.session.execute(text("select userid,redid,amount,time,`user`.`name`,`redenvelope`.`describe` from record INNER JOIN `user` ON `user`.ID=record.userid INNER JOIN redenvelope ON `redenvelope`.id=record.redid where redid={};".format(envid)))
     allEnvGrabData = envGrabData.fetchall()
 
     # 转换为json,返回
-    data = [{"userid":item.userid,"redid":item.redid,"amount":str(item.amount),"time":item.time} for item in allEnvGrabData]
+    data = [{"userid":item.userid,"redid":item.redid,"amount":str(item.amount),"time":item.time,"username":item.name,"describe":item.describe} for item in allEnvGrabData]
     print(data)
+
+    # 查询红包名
+    red = db.session.execute(text("select * from redenvelope where id = {};".format(envid))).first()
+
+    if isGrab == 'success':
+        return dict({
+            "grabMoney": 0,
+            "totalAmount": totalAmount,
+            "envNum": number,
+            "grabId": envid,
+            "records": data,
+            "restNum": number,
+            "describe": red.describe
+        })
+
     return dict({
         "grabMoney":grabMoney,
         "totalAmount":totalAmount,
         "envNum":number,
         "grabId":envid,
         "records":data,
-        "restNum":number-len(data)
+        "restNum":number-len(data),
+        "describe":red.describe
     })
 
 
@@ -483,7 +506,7 @@ def GetAllUser():
 
 @app.route('/GetAllRedPack', methods=['get'])
 def GetAllRedPack():
-    redpack_result = db.session.execute(text("SELECT DISTINCT  r.id ,r.`describe`,r.number,r.totalamount ,u.time, er.ID, name, balance FROM redenvelope AS r INNER JOIN user_red AS u INNER JOIN user as er ON u.redid = r.id and u.userid = er.ID;"))
+    redpack_result = db.session.execute(text("SELECT r.id ,r.`describe`,r.number,r.totalamount ,u.time, er.ID, name, balance FROM redenvelope AS r INNER JOIN user_red AS u INNER JOIN user as er ON u.redid = r.id and u.userid = er.ID;"))
     redpack = redpack_result.fetchall()  # 使用 fetchall() 获取所有结果
 
     # 打印查询结果
@@ -495,6 +518,22 @@ def GetAllRedPack():
 
     # 返回 JSON 字符串
     return json.dumps(data)
+
+@app.route('/isGrabed',methods=['post'])
+def IsGrabd():
+    request_data = request.get_json()
+    user_id = int(request_data['user_id'])
+    red_id = request_data['red_id']
+    print(user_id)
+    print(red_id)
+    res = db.session.execute(text("select count(*) as c from record where redid = {} and userid = {};".format(red_id,user_id))).first()
+    print(res)
+    db.session.commit()
+    if res.c!=0:
+        return dict({"status":"success"})
+    else:
+        return dict({"status":"false"})
+
 
 
 
